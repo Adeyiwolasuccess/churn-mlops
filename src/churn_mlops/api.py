@@ -3,19 +3,11 @@ import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from churn_mlops.predict import load_model, predict_churn
+from churn_mlops.predict import load_artifacts, preprocess_new_customer, predict_churn
 
 app = FastAPI(title="Churn Prediction API")
 
-model = load_model()
-
-
-@app.get("/")
-def root():
-    """
-    Simple health check endpoint.
-    """
-    return {"status": "Churn prediction API is running"}
+model, encoders, scaler = load_artifacts()
 
 
 class CustomerFeatures(BaseModel):
@@ -33,35 +25,33 @@ class CustomerFeatures(BaseModel):
     Total_Trans_Ct: float
     Total_Ct_Chng_Q4_Q1: float
     Avg_Utilization_Ratio: float
-    Avg_Trans_Size: float
-    Education_Level: float
-    Income_Category: float
-    Age_Group: float
-    Relationship_Contact_Ratio: float
-    Gender_M: bool
-    Marital_Status_Married: bool
-    Marital_Status_Single: bool
-    Marital_Status_Unknown: bool
-    Card_Category_Gold: bool
-    Card_Category_Platinum: bool
-    Card_Category_Silver: bool
+    Education_Level: str
+    Income_Category: str
+    Gender: str
+    Marital_Status: str
+    Card_Category: str
+
+
+@app.get("/")
+def root():
+    """
+    Simple health check endpoint.
+    """
+    return {"status": "Churn prediction API is running"}
 
 
 @app.post("/predict")
 def predict(customer: CustomerFeatures):
     """
-    Accepts one customer's already-processed features and returns
-    the predicted class and churn probability.
+    Accepts raw customer data, runs it through the same preprocessing
+    pipeline used at training time, and returns the predicted class
+    and churn probability.
     """
-    data = pd.DataFrame([customer.model_dump()])
-    data = data[model.feature_names_in_]  # reorder columns to match training order
-    predictions, probabilities = predict_churn(model, data)
+    raw_data = customer.model_dump()
+    processed = preprocess_new_customer(raw_data, encoders, scaler)
+    predictions, probabilities = predict_churn(model, processed)
 
     return {
         "prediction": int(predictions[0]),
         "churn_probability": float(probabilities[0])
     }
-
-
-
-    
