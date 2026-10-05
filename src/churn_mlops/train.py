@@ -1,10 +1,11 @@
 import pandas as pd
-
+import joblib
 from churn_mlops.data import get_raw_data
 from churn_mlops.clean import drop_leaky_columns
 from churn_mlops.features import add_engineered_features, encode_categorical_features, scale_features
 
 from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
 
 def prepare_data() -> pd.DataFrame:
     """
@@ -36,3 +37,25 @@ def get_train_test_split(df: pd.DataFrame):
     )
 
     return X_train, X_test, y_train, y_test
+
+
+def train_random_forest(X_train, y_train, model_path: str = "models/rf_model.joblib"):
+    """
+    Trains a Random Forest classifier and saves it to disk.
+    """
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+
+    joblib.dump(model, model_path)
+
+    return model
+
+def main():
+    df = prepare_data()
+    X_train, X_test, y_train, y_test = get_train_test_split(df)
+    model = train_random_forest(X_train, y_train)
+    print("Model trained and saved to models/rf_model.joblib")
+
+
+if __name__ == "__main__":
+    main()
