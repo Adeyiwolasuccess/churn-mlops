@@ -1,0 +1,38 @@
+import pandas as pd
+
+from churn_mlops.data import get_raw_data
+from churn_mlops.clean import drop_leaky_columns
+from churn_mlops.features import add_engineered_features, encode_categorical_features, scale_features
+
+from sklearn.model_selection import train_test_split
+
+def prepare_data() -> pd.DataFrame:
+    """
+    Runs the full data preparation pipeline: downloads and loads the raw
+    data, drops leaky columns, adds engineered features, encodes
+    categorical columns, and scales continuous features.
+    """
+    df = get_raw_data()
+    df = drop_leaky_columns(df)
+    df = add_engineered_features(df)
+    df = encode_categorical_features(df)
+    df = scale_features(df)
+    return df
+
+def get_train_test_split(df: pd.DataFrame):
+    """
+    Maps the target to 0/1, builds X and y, and returns a stratified
+    80/20 train/test split.
+    """
+    df['Attrition_Flag'] = df['Attrition_Flag'].map(
+        {'Attrited Customer': 1, 'Existing Customer': 0}
+    )
+
+    X = df.drop(['Attrition_Flag', 'CLIENTNUM'], axis=1)
+    y = df['Attrition_Flag']
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    return X_train, X_test, y_train, y_test
