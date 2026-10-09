@@ -1,6 +1,6 @@
 # Churn MLOps: Credit Card Customer Churn Prediction API
 
-[![CI](https://github.com/Adeyiwolasuccess/churn-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/Adeyiwolasuccess/churn-mlops/actions/workflows/ci.yml)
+[![CI](https://github.com/Adeyiwolasuccess/churn-mlops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Adeyiwolasuccess/churn-mlops/actions/workflows/ci.yml)
 
 An end-to-end machine learning project that predicts whether a credit card customer is likely to churn, served as a REST API and shipped through an automated CI/CD pipeline.
 
@@ -19,6 +19,7 @@ An end-to-end machine learning project that predicts whether a credit card custo
 - [Project structure](#project-structure)
 - [The data](#the-data)
 - [Pipeline details](#pipeline-details)
+- [Model performance](#model-performance)
 - [API reference](#api-reference)
 - [Getting started](#getting-started)
 - [Testing](#testing)
@@ -38,9 +39,10 @@ Beyond the model itself, the focus is on the engineering around it:
 - **Reproducible training.** A single command downloads the data, cleans it, engineers features, fits the encoders and scaler, trains the model, and saves every artifact.
 - **Consistent preprocessing.** The exact encoders and scaler fitted at training time are saved and reused at prediction time, so the API transforms new data the same way the model was trained.
 - **Leakage prevention.** Two pre-computed Naive Bayes columns that ship with the dataset leak the target and are dropped before training.
-- **Tested.** Unit tests guard the cleaning step and run automatically on every push.
+- **Honest evaluation.** The model is scored on a held-out test set with precision, recall, F1, and ROC-AUC, and the results are reproducible with one command.
+- **Tested.** Unit tests cover the cleaning step and API tests cover the prediction endpoint. They run automatically on every push.
 - **Containerised.** The Docker image trains its own model during the build, so it does not depend on any files from a developer's laptop.
-- **Automated delivery.** GitHub Actions runs the tests and the Docker build, and Render deploys the service only after CI passes.
+- **Automated delivery.** GitHub Actions trains the model, runs the tests, and builds the Docker image. Render deploys the service only after CI passes.
 
 ## Architecture
 
@@ -48,28 +50,31 @@ Beyond the model itself, the focus is on the engineering around it:
                      git push to main
                            |
                            v
-              +---------------------------+
-              |      GitHub Actions       |
-              |                           |
-              |  1. test:  uv run pytest  |
-              |  2. build: docker build   |
-              |     (trains the model)    |
-              +-------------+-------------+
-                            | CI checks pass
-                            v
-              +---------------------------+
-              |          Render           |
-              |  builds the Dockerfile,   |
-              |  trains the model,        |
-              |  deploys the container    |
-              +-------------+-------------+
-                            |
-                            v
-              +---------------------------+
-              |  FastAPI  /predict        |
-              |  encoders -> scaler ->    |
-              |  Random Forest            |
-              +---------------------------+
+              +-----------------------------+
+              |       GitHub Actions        |
+              |                             |
+              |  1. test:                   |
+              |     - train the model       |
+              |     - uv run pytest         |
+              |  2. build:                  |
+              |     - docker build          |
+              |       (trains the model)    |
+              +--------------+--------------+
+                             | CI checks pass
+                             v
+              +-----------------------------+
+              |           Render            |
+              |  builds the Dockerfile,     |
+              |  trains the model,          |
+              |  deploys the container      |
+              +--------------+--------------+
+                             |
+                             v
+              +-----------------------------+
+              |   FastAPI  POST /predict    |
+              |   encoders -> scaler ->     |
+              |   Random Forest             |
+              +-----------------------------+
 ```
 
 ## Tech stack
@@ -81,7 +86,7 @@ Beyond the model itself, the focus is on the engineering around it:
 | Data and ML | pandas, NumPy, scikit-learn, joblib |
 | Data source | Kaggle via `kagglehub` |
 | API | FastAPI, Pydantic, Uvicorn |
-| Testing | pytest |
+| Testing | pytest, FastAPI `TestClient` |
 | Containers | Docker |
 | CI | GitHub Actions |
 | Hosting | Render |
@@ -90,16 +95,18 @@ Beyond the model itself, the focus is on the engineering around it:
 
 ```
 churn-mlops/
-├── .github/workflows/ci.yml   # CI pipeline: test, then Docker build
+├── .github/workflows/ci.yml   # CI pipeline: train and test, then Docker build
 ├── src/churn_mlops/
 │   ├── data.py                # Download the dataset, load to DataFrame and SQLite
 │   ├── clean.py               # Drop the leaky Naive Bayes columns
 │   ├── features.py            # Feature engineering, encoders, scaler
 │   ├── train.py               # End-to-end training script
+│   ├── evaluate.py            # Scores the saved model on the held-out test set
 │   ├── predict.py             # Load artifacts, preprocess new customers, predict
 │   └── api.py                 # FastAPI application
 ├── tests/
-│   └── test_clean.py          # Unit tests for the cleaning step
+│   ├── test_clean.py          # Unit test for the cleaning step
+│   └── test_api.py            # API tests for the health check and /predict
 ├── Dockerfile                 # Builds the image and trains the model inside it
 ├── pyproject.toml             # Project metadata and dependencies
 ├── uv.lock                    # Locked dependency versions
@@ -111,7 +118,7 @@ Generated at training time and **not** committed (they are gitignored): `models/
 ## The data
 
 - **Dataset:** [Credit Card Customers](https://www.kaggle.com/datasets/sakshigoyal7/credit-card-customers) (BankChurners) from Kaggle, roughly 10,000 customers.
-- **Target:** `Attrition_Flag`, mapped to `1` for "Attrited Customer" (churned) and `0` for "Existing Customer".
+- **Target:** `Attrition_Flag`, mapped to `1` for "Attrited Customer" (churned) and `0` for "Existing Customer". About 16% of customers churn.
 - **Features:** customer demographics (age, gender, dependents, education, marital status, income category), card details (card category, months on book, credit limit), and activity (transaction amounts and counts, revolving balance, utilisation ratio, contact and inactivity counts).
 - **Download:** the dataset is fetched automatically by `kagglehub` when training runs. No CSV is stored in the repository.
 
@@ -134,6 +141,42 @@ Running `churn_mlops.train` performs these steps in order:
 Because every random seed is fixed, the same data always produces the same model.
 
 At prediction time, `predict.py` loads the saved model, encoders, and scaler once at startup. Each request goes through the same engineering, encoding, and scaling steps before the model scores it.
+
+## Model performance
+
+Evaluated on a held-out test set of 2,026 customers (20% of the data, stratified split, `random_state=42`): 325 churned and 1,701 existing. Reproduce with:
+
+```bash
+uv run python -m churn_mlops.evaluate
+```
+
+| Metric | Value |
+| --- | --- |
+| Accuracy | 0.961 |
+| Precision | 0.927 |
+| Recall | 0.822 |
+| F1 score | 0.871 |
+| ROC-AUC | 0.989 |
+
+Confusion matrix at the default 0.5 threshold:
+
+| | Predicted: stays | Predicted: churns |
+| --- | --- | --- |
+| **Actually stays** | 1,680 | 21 |
+| **Actually churns** | 58 | 267 |
+
+**How to read this**
+
+- About 16% of customers churn, so a model that always predicted "stays" would already score roughly 84% accuracy. Precision, recall, and ROC-AUC say more than accuracy here.
+- **Recall of 0.82:** the model catches 267 of the 325 customers who actually churned and misses 58.
+- **Precision of 0.93:** when the model flags a customer as likely to churn, it is right about 93% of the time (21 false alarms against 267 correct flags).
+- **ROC-AUC of 0.989:** the model ranks churners above non-churners almost perfectly across all thresholds.
+- **The threshold is a business choice.** Lowering it below 0.5 would catch more churners (higher recall) at the cost of more false alarms (lower precision). The right balance depends on what a retention offer costs compared with a lost customer.
+
+**Caveats**
+
+- The encoders and scaler are fitted on the full dataset before the split, so these scores are slightly optimistic. Fitting them on the training split only is planned.
+- The model uses default Random Forest settings, with no hyperparameter tuning or class-imbalance handling, and the test set was not used to tune anything.
 
 ## API reference
 
@@ -217,7 +260,7 @@ curl -X POST "https://churn-mlops-3r7c.onrender.com/predict" \
 
 **Errors**
 
-- `422 Unprocessable Entity`: a field is missing, has the wrong type, or a categorical field has a value outside the allowed list. The response body names the offending field.
+- `422 Unprocessable Entity`: a field is missing, has the wrong type, or a categorical field has a value outside the allowed list. The response body names the offending field and, for categories, lists the allowed values.
 
 ## Getting started
 
@@ -243,6 +286,14 @@ uv run python -m churn_mlops.train
 
 This creates the `models/` folder containing `rf_model.joblib`, `encoders.joblib`, and `scaler.joblib`, and writes `churn.db`.
 
+### Evaluate the model
+
+```bash
+uv run python -m churn_mlops.evaluate
+```
+
+Prints accuracy, precision, recall, F1, ROC-AUC, and the confusion matrix for the held-out test set.
+
 ### Run the API locally
 
 ```bash
@@ -259,9 +310,18 @@ Open http://127.0.0.1:8000/docs to try the endpoints in Swagger.
 uv run pytest
 ```
 
-The current test suite covers the cleaning step:
+The suite has 5 tests. Because `api.py` loads the saved model when it is imported, run the training step once before testing on a fresh checkout.
+
+**Cleaning (`tests/test_clean.py`)**
 
 - `test_drop_leaky_columns_removes_only_leaky_columns` builds a small fake DataFrame and checks two things: both leaky columns are gone, and the ordinary columns are still present. Together these catch a function that drops too little and one that drops too much.
+
+**API (`tests/test_api.py`)**
+
+- `test_health_check`: `GET /` returns 200.
+- `test_predict_returns_valid_probability`: a valid customer returns 200, a prediction of 0 or 1, and a probability between 0 and 1.
+- `test_predict_rejects_unknown_category`: an invalid category such as `"Gender": "X"` returns 422 instead of crashing.
+- `test_predict_rejects_missing_field`: a request with a required field removed returns 422.
 
 ## Docker
 
@@ -274,13 +334,15 @@ docker run -p 8000:8000 churn-api
 
 The Dockerfile installs dependencies with `uv`, then runs `python -m churn_mlops.train` as a build step. The trained model, encoders, and scaler are baked into the image, so a container starts ready to serve and every container built from the same image behaves identically. The build needs internet access to download the dataset.
 
+The base image is the official `python:3.13-slim`, pulled from AWS's public mirror (`public.ecr.aws/docker/library/python`) rather than Docker Hub, which avoids Docker Hub's rate limits and occasional outages on shared CI runners.
+
 ## CI/CD
 
 The workflow in `.github/workflows/ci.yml` runs on every push to `main` and on every pull request:
 
 | Job | What it does |
 | --- | --- |
-| `test` | Installs dependencies with `uv` and runs `uv run pytest` |
+| `test` | Installs dependencies with `uv`, trains the model (the API tests need the saved artifacts), then runs `uv run pytest` |
 | `build` | Runs only if `test` passes. Builds the Docker image, which also trains the model on a clean machine |
 
 Deployment is handled by Render, which builds the same `Dockerfile` and is configured with **Auto-Deploy: After CI Checks Pass**, so a failing test never reaches production.
@@ -289,16 +351,18 @@ Deployment is handled by Render, which builds the same `Dockerfile` and is confi
 
 - **Train inside the Docker build.** The model folder is gitignored because model files are build artifacts, not source code. Training during the build makes the image self-contained and reproducible.
 - **Save and reuse the preprocessors.** Encoders and the scaler are persisted next to the model so prediction applies exactly the transformations used in training.
-- **Small, testable functions.** Cleaning, feature engineering, and training are separate functions, which is what makes unit tests easy to write.
-- **Typed request validation.** Pydantic models with `Literal` types reject invalid categories with a clear 422 instead of a server error.
+- **Small, testable functions.** Cleaning, feature engineering, training, and evaluation are separate functions, which is what makes unit tests easy to write.
+- **Typed request validation.** Pydantic `Literal` types reject invalid categories with a clear 422 instead of a server error.
+- **Tests that can fail.** Each test was checked by breaking the code on purpose and confirming the test caught it.
 - **Lock file committed.** `uv.lock` pins every dependency, so local, CI, and production environments match.
+- **Registry-independent builds.** Pulling the base image from a public mirror removes a flaky external dependency from CI.
 
 ## Known limitations and future work
 
-- **Preprocessors are fitted on the full dataset before the train/test split.** This lets a small amount of information from the test rows into the encoders and scaler. A stricter setup would fit them on the training split only.
-- **No model evaluation report yet.** Add precision, recall, F1, and ROC-AUC on the held-out test set (churn is the minority class, so accuracy alone is misleading), and consider hyperparameter tuning and class-imbalance handling.
-- **Thin test coverage.** Tests cover the cleaning step only. Good next additions are a prediction smoke test (valid input returns a probability between 0 and 1) and API tests using FastAPI's `TestClient`.
+- **Preprocessors are fitted on the full dataset before the train/test split.** This lets a small amount of information from the test rows into the encoders and scaler, so the reported scores are slightly optimistic. A stricter setup would fit them on the training split only, retrain, and re-run the evaluation.
+- **Default decision threshold and model settings.** The model uses a 0.5 threshold and default Random Forest parameters. Threshold tuning against business costs, class-imbalance handling, and hyperparameter search with cross-validation are natural next steps.
 - **Model is retrained on every build.** A model registry (such as MLflow) or versioned artifact storage would separate training from deployment.
+- **Production image includes dev dependencies.** Installing with `uv sync --frozen --no-dev` would make the image smaller.
 - **Free-tier hosting.** The live service sleeps when idle, so the first request can be slow.
 - **Possible additions:** monitoring and logging of predictions, data drift checks, and a scheduled retraining workflow.
 
