@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -47,6 +49,10 @@ def train_random_forest(X_train, y_train, model_path: str = "models/rf_model.job
 
 
 def main():
+    # Make sure the output folder exists (it's gitignored, so a fresh
+    # checkout or Docker build won't have it)
+    Path("models").mkdir(exist_ok=True)
+
     df = prepare_data()
 
     # Fit encoders and scaler on the full dataset, save them for reuse
