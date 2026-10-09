@@ -6,6 +6,7 @@ dist/
 wheels/
 models/
 *.egg-info
+churn.db
 
 # Virtual environments
 .venv
