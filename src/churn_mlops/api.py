@@ -1,4 +1,4 @@
-import pandas as pd
+from typing import Literal
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -25,11 +25,17 @@ class CustomerFeatures(BaseModel):
     Total_Trans_Ct: float
     Total_Ct_Chng_Q4_Q1: float
     Avg_Utilization_Ratio: float
-    Education_Level: str
-    Income_Category: str
-    Gender: str
-    Marital_Status: str
-    Card_Category: str
+    Education_Level: Literal[
+        "Uneducated", "High School", "College", "Graduate",
+        "Post-Graduate", "Doctorate", "Unknown",
+    ]
+    Income_Category: Literal[
+        "Less than $40K", "$40K - $60K", "$60K - $80K",
+        "$80K - $120K", "$120K +", "Unknown",
+    ]
+    Gender: Literal["M", "F"]
+    Marital_Status: Literal["Married", "Single", "Divorced", "Unknown"]
+    Card_Category: Literal["Blue", "Silver", "Gold", "Platinum"]
 
 
 @app.get("/")
@@ -53,5 +59,5 @@ def predict(customer: CustomerFeatures):
 
     return {
         "prediction": int(predictions[0]),
-        "churn_probability": float(probabilities[0])
+        "churn_probability": float(probabilities[0]),
     }
