@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
+      - name: Train model (API tests need the saved artifacts)
+        run: uv run python -m churn_mlops.train
+
       - name: Run tests
         run: uv run pytest
 
